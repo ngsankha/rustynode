@@ -8,8 +8,12 @@ var setTimeout = function(callback, timeout) {
 }
 
 var _recv = function(message) {
-  timeoutRegistry[Number(message)]();
+  var key = Number(message);
+  timeoutRegistry[key]();
+  delete timeoutRegistry[key];
 };
+
+/////////////////////////////////////////////
 
 setTimeout(function() {
   _print('World');

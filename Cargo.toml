@@ -6,12 +6,7 @@ authors = ["Sankha Narayan Guria <sankha93@gmail.com>"]
 [dependencies.js]
 git = "https://github.com/servo/rust-mozjs"
 
-[dependencies.eventual]
-git = "https://github.com/carllerche/eventual"
-
-[dependencies.syncbox]
-git = "https://github.com/carllerche/syncbox"
-
 [dependencies]
-libc = "0.1"
+libc = "0.2"
 rustc-serialize = "0.3"
+mio = "0.4"
