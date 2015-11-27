@@ -1,7 +1,3 @@
-/* This Source Code Form is subject to the terms of the Mozilla Public
- * License, v. 2.0. If a copy of the MPL was not distributed with this file,
- * You can obtain one at http://mozilla.org/MPL/2.0/. */
-
 extern crate js;
 extern crate libc;
 extern crate rustc_serialize;
@@ -18,17 +14,17 @@ use js::jsapi::JS_GlobalObjectTraceHook;
 use js::jsapi::{CallArgs,CompartmentOptions,OnNewGlobalHookOption,Rooted,Value};
 use js::jsapi::{JS_DefineFunction,JS_Init,JS_InitStandardClasses,JS_NewGlobalObject,JS_EncodeStringToUTF8,JS_ReportError,JS_ReportPendingException,JS_CallFunctionName,CurrentGlobalOrNull,JS_SetReservedSlot,JS_GetReservedSlot};
 use js::jsapi::{JSAutoCompartment,JSAutoRequest,JSContext,JSClass};
-use js::jsapi::{JS_SetGCParameter, JSGCParamKey, JSGCMode};
-use js::jsapi::{RootedValue, HandleObject, HandleValue, HandleValueArray};
+use js::jsapi::{JS_SetGCParameter,JSGCParamKey,JSGCMode};
+use js::jsapi::{HandleValue,HandleValueArray};
 use js::jsval::{UndefinedValue,DoubleValue,PrivateValue};
 use js::rust::Runtime;
 
 use rustc_serialize::json;
 
-use mio::{EventLoop, Handler};
+use mio::{EventLoop,Handler};
 
 static CLASS: &'static JSClass = &JSClass {
-  name: b"test\0" as *const u8 as *const libc::c_char,
+  name: b"Global\0" as *const u8 as *const libc::c_char,
   flags: JSCLASS_IS_GLOBAL | ((JSCLASS_GLOBAL_SLOT_COUNT & JSCLASS_RESERVED_SLOTS_MASK) << JSCLASS_RESERVED_SLOTS_SHIFT),
   addProperty: None,
   delProperty: None,
@@ -81,11 +77,10 @@ fn callback(cx: *mut JSContext, message: &str) {
   unsafe {
     let global = CurrentGlobalOrNull(cx);
     assert!(!global.is_null());
-    //let _ac = JSAutoCompartment::new(cx, global);
     let value = JS_GetReservedSlot(global, 0);
     assert!(!value.is_undefined());
     let event_loop = value.to_private() as *mut EventLoop<EventLoopHandler>;
-    (*event_loop).timeout_ms(timeout_msg.timestamp, timeout_msg.timeout);
+    let _ = (*event_loop).timeout_ms(timeout_msg.timestamp, timeout_msg.timeout);
   };
 }
 
@@ -94,27 +89,27 @@ fn main() {
     JS_Init();
   }
   let runtime = Runtime::new();
-  let context = runtime.cx();
+  let cx = runtime.cx();
 
   let h_option = OnNewGlobalHookOption::FireOnNewGlobalHook;
   let c_option = CompartmentOptions::default();
-  let _ar = JSAutoRequest::new(context);
-  let global = unsafe { JS_NewGlobalObject(context, CLASS, ptr::null_mut(), h_option, &c_option) };
-  let global_root = Rooted::new(context, global);
+  let _ar = JSAutoRequest::new(cx);
+  let global = unsafe { JS_NewGlobalObject(cx, CLASS, ptr::null_mut(), h_option, &c_option) };
+  let global_root = Rooted::new(cx, global);
   let global = global_root.handle();
-  let _ac = JSAutoCompartment::new(context, global.get());
+  let _ac = JSAutoCompartment::new(cx, global.get());
   unsafe {
     JS_SetGCParameter(runtime.rt(), JSGCParamKey::JSGC_MODE, JSGCMode::JSGC_MODE_INCREMENTAL as u32);
-    JS_InitStandardClasses(context, global);
-    let send_fn = JS_DefineFunction(context, global, b"_send\0".as_ptr() as *const libc::c_char,
+    JS_InitStandardClasses(cx, global);
+    let send_fn = JS_DefineFunction(cx, global, b"_send\0".as_ptr() as *const libc::c_char,
                                     Some(send), 1, 0);
     assert!(!send_fn.is_null());
-    let print_fn = JS_DefineFunction(context, global, b"_print\0".as_ptr() as *const libc::c_char,
+    let print_fn = JS_DefineFunction(cx, global, b"_print\0".as_ptr() as *const libc::c_char,
                                      Some(print), 1, 0);
     assert!(!print_fn.is_null());
   }
 
-  let mut event_loop = EventLoop::new().unwrap();
+  let event_loop = EventLoop::new().unwrap();
   let mut boxed_event_loop = Box::new(event_loop);
   let mut handler = EventLoopHandler { rt: runtime };
   let box_ptr = Box::into_raw(boxed_event_loop);
@@ -125,10 +120,18 @@ fn main() {
     boxed_event_loop = Box::from_raw(box_ptr);
   }
 
-  let mut f = File::open("src/bootstrap.js").unwrap();
+  let mut file = match File::open("src/bootstrap.js") {
+    Err(_) => panic!("Error opening file"),
+    Ok(file) => file
+  };
   let mut source = String::new();
-  f.read_to_string(&mut source);
-  handler.rt.evaluate_script(global, source, "bootstrap.js".to_string(), 1);
+  if let Err(_) = file.read_to_string(&mut source) {
+    panic!("Error reading file");
+  };
+  match handler.rt.evaluate_script(global, source, "bootstrap.js".to_string(), 1) {
+    Err(_) => unsafe { JS_ReportPendingException(cx); panic!("Error executing JS") },
+    _ => ()
+  };
   let _ = &boxed_event_loop.run(&mut handler);
 }
 
