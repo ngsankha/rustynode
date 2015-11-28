@@ -12,11 +12,11 @@ use std::fs::File;
 use js::{JSCLASS_RESERVED_SLOTS_MASK,JSCLASS_RESERVED_SLOTS_SHIFT,JSCLASS_GLOBAL_SLOT_COUNT,JSCLASS_IS_GLOBAL};
 use js::jsapi::JS_GlobalObjectTraceHook;
 use js::jsapi::{CallArgs,CompartmentOptions,OnNewGlobalHookOption,Rooted,Value};
-use js::jsapi::{JS_DefineFunction,JS_Init,JS_InitStandardClasses,JS_NewGlobalObject,JS_EncodeStringToUTF8,JS_ReportError,JS_ReportPendingException,JS_CallFunctionName,CurrentGlobalOrNull,JS_SetReservedSlot,JS_GetReservedSlot};
+use js::jsapi::{JS_DefineFunction,JS_Init,JS_InitStandardClasses,JS_NewGlobalObject,JS_EncodeStringToUTF8,JS_ReportError,JS_ReportPendingException,JS_CallFunctionName,CurrentGlobalOrNull,JS_SetReservedSlot,JS_GetReservedSlot,JS_NewStringCopyN};
 use js::jsapi::{JSAutoCompartment,JSAutoRequest,JSContext,JSClass};
 use js::jsapi::{JS_SetGCParameter,JSGCParamKey,JSGCMode};
 use js::jsapi::{HandleValue,HandleValueArray};
-use js::jsval::{UndefinedValue,DoubleValue,PrivateValue};
+use js::jsval::{UndefinedValue,DoubleValue,StringValue,PrivateValue};
 use js::rust::Runtime;
 
 use rustc_serialize::json;
@@ -63,15 +63,16 @@ impl Handler for EventLoopHandler {
       let mut rval = Rooted::new(cx, UndefinedValue());
       assert!(!global.is_null());
       let global_root = Rooted::new(cx, global);
-      let elems = [DoubleValue(timestamp as f64)];
-      let args = HandleValueArray{ length_: 1, elements_: &elems as *const Value };
+      let event_jsstr = JS_NewStringCopyN(cx, b"timeout\0".as_ptr() as *const libc::c_char, 7);
+      let elems = [StringValue(&*event_jsstr), DoubleValue(timestamp as f64)];
+      let args = HandleValueArray{ length_: 2, elements_: &elems as *const Value };
       JS_CallFunctionName(cx, global_root.handle(), b"_recv\0".as_ptr() as *const libc::c_char, &args, rval.handle_mut());
     }
     //event_loop.shutdown();
   }
 }
 
-fn callback(cx: *mut JSContext, message: &str) {
+fn set_timeout(cx: *mut JSContext, message: &str) {
   let timeout_msg: Timeout = json::decode(message).unwrap();
   let _ar = JSAutoRequest::new(cx);
   unsafe {
@@ -81,6 +82,13 @@ fn callback(cx: *mut JSContext, message: &str) {
     assert!(!value.is_undefined());
     let event_loop = value.to_private() as *mut EventLoop<EventLoopHandler>;
     let _ = (*event_loop).timeout_ms(timeout_msg.timestamp, timeout_msg.timeout);
+  };
+}
+
+fn callback(cx: *mut JSContext, event: &str, message: &str) {
+  match event {
+    "timeout" => set_timeout(cx, message),
+    _ => ()
   };
 }
 
@@ -135,20 +143,27 @@ fn main() {
   let _ = &boxed_event_loop.run(&mut handler);
 }
 
+fn jsval_to_str(cx: *mut JSContext, val: HandleValue) -> String {
+  let js = unsafe { js::rust::ToString(cx, val) };
+  let rooted_val = Rooted::new(cx, js);
+  let string = unsafe {
+    let tmp = JS_EncodeStringToUTF8(cx, rooted_val.handle());
+    CStr::from_ptr(tmp)
+  };
+  str::from_utf8(string.to_bytes()).unwrap().to_string()
+}
+
 unsafe extern "C" fn send(cx: *mut JSContext, argc: u32, vp: *mut Value) -> bool {
   let args = CallArgs::from_vp(vp, argc);
 
-  if args._base.argc_ != 1 {
-    JS_ReportError(cx, b"_send() requires exactly 1 argument\0".as_ptr() as *const libc::c_char);
+  if args._base.argc_ != 2 {
+    JS_ReportError(cx, b"_send() requires exactly 2 arguments\0".as_ptr() as *const libc::c_char);
     return false;
   }
 
-  let arg = args.get(0);
-  let js = js::rust::ToString(cx, arg);
-  let message_root = Rooted::new(cx, js);
-  let message = JS_EncodeStringToUTF8(cx, message_root.handle());
-  let message = CStr::from_ptr(message);
-  callback(cx, str::from_utf8(message.to_bytes()).unwrap());
+  let event = jsval_to_str(cx, args.get(0));
+  let message = jsval_to_str(cx, args.get(1));
+  callback(cx, &event, &message);
 
   args.rval().set(UndefinedValue());
   return true;

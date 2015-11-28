@@ -3,24 +3,32 @@ var timeoutRegistry = {};
 var setTimeout = function(callback, timeout) {
   var id = Math.floor(Math.random() * 999999) + 1;
   timeoutRegistry[id] = callback;
-  _send(JSON.stringify({timestamp: id, timeout: timeout}));
-}
-
-var _recv = function(message) {
-  var key = Number(message);
-  timeoutRegistry[key]();
-  delete timeoutRegistry[key];
+  _send('timeout', JSON.stringify({timestamp: id, timeout: timeout}));
 };
+
+var _recv = function(event, message) {
+  switch (event) {
+    case 'timeout':
+      var key = Number(message);
+      timeoutRegistry[key]();
+      delete timeoutRegistry[key];
+      break;
+  }
+};
+
+var console = {
+  log: _print
+}
 
 /////////////////////////////////////////////
 
 setTimeout(function() {
-  _print('World');
+  console.log('World');
   setTimeout(function() {
-    _print('I will always come later.');
+    console.log('I will always come later.');
   }, 1000);
 }, 2000);
 setTimeout(function() {
-  _print('But I come first!');
+  console.log('But I come first!');
 }, 1000);
-_print('Hello');
+console.log('Hello');
