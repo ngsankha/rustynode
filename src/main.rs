@@ -9,6 +9,7 @@ use std::str;
 use std::io::prelude::*;
 use std::fs::File;
 use std::thread;
+use std::env;
 
 use js::{JSCLASS_RESERVED_SLOTS_MASK,JSCLASS_RESERVED_SLOTS_SHIFT,JSCLASS_GLOBAL_SLOT_COUNT,JSCLASS_IS_GLOBAL};
 use js::jsapi::JS_GlobalObjectTraceHook;
@@ -137,6 +138,12 @@ fn callback(cx: *mut JSContext, event: &str, message: &str) {
 }
 
 fn main() {
+  let filename: String;
+  match env::args().nth(1) {
+    None => panic!("Usage: rustynode filename"),
+    Some(file) => filename = file
+  }
+
   unsafe {
     JS_Init();
   }
@@ -173,14 +180,27 @@ fn main() {
   }
 
   let mut file = match File::open("src/bootstrap.js") {
-    Err(_) => panic!("Error opening file"),
+    Err(_) => panic!("Error loading bootstrap JS"),
     Ok(file) => file
   };
   let mut source = String::new();
   if let Err(_) = file.read_to_string(&mut source) {
-    panic!("Error reading file");
+    panic!("Error reading bootstrap JS");
   };
   match handler.rt.evaluate_script(global, source, "bootstrap.js".to_string(), 1) {
+    Err(_) => unsafe { JS_ReportPendingException(cx); panic!("Error executing bootstrap JS") },
+    _ => ()
+  };
+
+  let mut file = match File::open(filename.clone()) {
+    Err(_) => panic!("Error loading script"),
+    Ok(file) => file
+  };
+  let mut source = String::new();
+  if let Err(_) = file.read_to_string(&mut source) {
+    panic!("Error reading script");
+  };
+  match handler.rt.evaluate_script(global, source, filename, 1) {
     Err(_) => unsafe { JS_ReportPendingException(cx); panic!("Error executing JS") },
     _ => ()
   };
