@@ -179,7 +179,7 @@ fn main() {
     boxed_event_loop = Box::from_raw(box_ptr);
   }
 
-  let mut file = match File::open("src/bootstrap.js") {
+  let mut file = match File::open("lib/bootstrap.js") {
     Err(_) => panic!("Error loading bootstrap JS"),
     Ok(file) => file
   };
