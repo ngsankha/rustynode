@@ -124,7 +124,7 @@ fn read_file(cx: *mut JSContext, message: &str) {
   thread::spawn(move || {
     let mut f = File::open(readfile_msg.filename).unwrap();
     let mut data = String::new();
-    f.read_to_string(&mut data);
+    let _ = f.read_to_string(&mut data);
     let _ = sender.send((readfile_msg.id, "readFile".to_string(), data));
   });
 }
