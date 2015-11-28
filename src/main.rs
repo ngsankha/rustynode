@@ -8,6 +8,7 @@ use std::ptr;
 use std::str;
 use std::io::prelude::*;
 use std::fs::File;
+use std::thread;
 
 use js::{JSCLASS_RESERVED_SLOTS_MASK,JSCLASS_RESERVED_SLOTS_SHIFT,JSCLASS_GLOBAL_SLOT_COUNT,JSCLASS_IS_GLOBAL};
 use js::jsapi::JS_GlobalObjectTraceHook;
@@ -43,8 +44,14 @@ static CLASS: &'static JSClass = &JSClass {
 
 #[derive(RustcDecodable, RustcEncodable)]
 struct Timeout {
-  timestamp: u64,
+  id: u64,
   timeout: u64
+}
+
+#[derive(RustcDecodable, RustcEncodable)]
+struct FileRead {
+  id: u64,
+  filename: String
 }
 
 struct EventLoopHandler {
@@ -53,9 +60,25 @@ struct EventLoopHandler {
 
 impl Handler for EventLoopHandler {
   type Timeout = u64;
-  type Message = ();
+  type Message = (u64, String, String);
 
-  fn timeout(&mut self, event_loop: &mut EventLoop<EventLoopHandler>, timestamp: u64) {
+  fn notify(&mut self, event_loop: &mut EventLoop<EventLoopHandler>, message: (u64, String, String)) {
+    let cx = self.rt.cx();
+    let _ar = JSAutoRequest::new(cx);
+    unsafe {
+      let global = CurrentGlobalOrNull(cx);
+      let mut rval = Rooted::new(cx, UndefinedValue());
+      assert!(!global.is_null());
+      let global_root = Rooted::new(cx, global);
+      let event_jsstr = JS_NewStringCopyN(cx, message.1.as_ptr() as *const libc::c_char, message.1.len());
+      let data_jsstr = JS_NewStringCopyN(cx, message.2.as_ptr() as *const libc::c_char, message.2.len());
+      let elems = [StringValue(&*event_jsstr), DoubleValue(message.0 as f64), StringValue(&*data_jsstr)];
+      let args = HandleValueArray{ length_: 3, elements_: &elems as *const Value };
+      JS_CallFunctionName(cx, global_root.handle(), b"_recv\0".as_ptr() as *const libc::c_char, &args, rval.handle_mut());
+    }
+  }
+
+  fn timeout(&mut self, event_loop: &mut EventLoop<EventLoopHandler>, id: u64) {
     let cx = self.rt.cx();
     let _ar = JSAutoRequest::new(cx);
     unsafe {
@@ -64,7 +87,7 @@ impl Handler for EventLoopHandler {
       assert!(!global.is_null());
       let global_root = Rooted::new(cx, global);
       let event_jsstr = JS_NewStringCopyN(cx, b"timeout\0".as_ptr() as *const libc::c_char, 7);
-      let elems = [StringValue(&*event_jsstr), DoubleValue(timestamp as f64)];
+      let elems = [StringValue(&*event_jsstr), DoubleValue(id as f64)];
       let args = HandleValueArray{ length_: 2, elements_: &elems as *const Value };
       JS_CallFunctionName(cx, global_root.handle(), b"_recv\0".as_ptr() as *const libc::c_char, &args, rval.handle_mut());
     }
@@ -81,13 +104,34 @@ fn set_timeout(cx: *mut JSContext, message: &str) {
     let value = JS_GetReservedSlot(global, 0);
     assert!(!value.is_undefined());
     let event_loop = value.to_private() as *mut EventLoop<EventLoopHandler>;
-    let _ = (*event_loop).timeout_ms(timeout_msg.timestamp, timeout_msg.timeout);
+    let _ = (*event_loop).timeout_ms(timeout_msg.id, timeout_msg.timeout);
   };
+}
+
+fn read_file(cx: *mut JSContext, message: &str) {
+  let readfile_msg: FileRead = json::decode(message).unwrap();
+  let _ar = JSAutoRequest::new(cx);
+  let sender = unsafe {
+    let global = CurrentGlobalOrNull(cx);
+    assert!(!global.is_null());
+    let value = JS_GetReservedSlot(global, 0);
+    assert!(!value.is_undefined());
+    let event_loop = value.to_private() as *mut EventLoop<EventLoopHandler>;
+    (*event_loop).channel()
+  };
+
+  thread::spawn(move || {
+    let mut f = File::open(readfile_msg.filename).unwrap();
+    let mut data = String::new();
+    f.read_to_string(&mut data);
+    let _ = sender.send((readfile_msg.id, "readFile".to_string(), data));
+  });
 }
 
 fn callback(cx: *mut JSContext, event: &str, message: &str) {
   match event {
     "timeout" => set_timeout(cx, message),
+    "readFile" => read_file(cx, message),
     _ => ()
   };
 }

@@ -1,24 +1,39 @@
-var timeoutRegistry = {};
-
-var setTimeout = function(callback, timeout) {
-  var id = Math.floor(Math.random() * 999999) + 1;
-  timeoutRegistry[id] = callback;
-  _send('timeout', JSON.stringify({timestamp: id, timeout: timeout}));
-};
-
-var _recv = function(event, message) {
+var _recv = function(event, id, data) {
+  var key = Number(id);
   switch (event) {
     case 'timeout':
-      var key = Number(message);
-      timeoutRegistry[key]();
-      delete timeoutRegistry[key];
+      callbackRegistry[key]();
+      break;
+    case 'readFile':
+      callbackRegistry[key](data);
       break;
   }
+  delete callbackRegistry[key];
+};
+
+var _generateID = function() {
+  return Math.floor(Math.random() * 999999) + 1;
 };
 
 var console = {
   log: _print
 }
+
+var callbackRegistry = {};
+
+var setTimeout = function(callback, timeout) {
+  var id = _generateID();
+  callbackRegistry[id] = callback;
+  _send('timeout', JSON.stringify({id: id, timeout: timeout}));
+};
+
+var fs = {
+  readFile: function(filename, callback) {
+    var id = _generateID();
+    callbackRegistry[id] = callback;
+    _send('readFile', JSON.stringify({id: id, filename: filename}));
+  }
+};
 
 /////////////////////////////////////////////
 
@@ -31,4 +46,7 @@ setTimeout(function() {
 setTimeout(function() {
   console.log('But I come first!');
 }, 1000);
+fs.readFile('Cargo.toml', function(data) {
+  console.log(data);
+});
 console.log('Hello');
