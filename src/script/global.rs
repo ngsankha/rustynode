@@ -12,7 +12,7 @@ use js::jsapi::{JS_DefineFunction,JS_Init,JS_InitStandardClasses,JS_NewGlobalObj
 use js::jsapi::{JSAutoCompartment,JSAutoRequest,JSContext,JSClass};
 use js::jsapi::{JS_SetGCParameter,JSGCParamKey,JSGCMode};
 use js::jsapi::{HandleValue,HandleValueArray,JSFunctionSpec,JSPropertySpec,JSNativeWrapper,JSTraceOp,JSObject,JSVersion,RootedObject,MutableHandleObject};
-use js::jsval::{UndefinedValue,DoubleValue,StringValue,PrivateValue};
+use js::jsval::{UndefinedValue,DoubleValue,StringValue,PrivateValue,ObjectValue};
 use js::conversions::FromJSValConvertible;
 
 use script::reflect::{Reflectable, PrototypeID, finalize, initialize_global};
@@ -112,7 +112,9 @@ impl Global {
 }
 
 unsafe fn print_impl(cx: *mut JSContext, args: &CallArgs) -> Result<(), ()> {
-  let global = try!(Global::from_value(cx, args.thisv()));
+  let global_obj = CurrentGlobalOrNull(cx);
+  let global_root = Rooted::new(cx, ObjectValue(&*global_obj));
+  let global = try!(Global::from_value(cx, global_root.handle()));
   let output = (0..args._base.argc_)
       .map(|i| String::from_jsval(cx, args.get(0), ()).unwrap())
       .collect::<Vec<String>>()

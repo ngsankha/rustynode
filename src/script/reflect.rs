@@ -111,7 +111,7 @@ unsafe fn get_prototypes(global: *mut JSObject) -> *mut [*mut JSObject; Prototyp
 #[derive(PartialEq, Copy, Clone)]
 #[repr(u16)]
 pub enum PrototypeID {
-  Global = 0,
+  Global,
   Count = 1
 }
 
