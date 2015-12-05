@@ -9,7 +9,6 @@ use js::jsapi::{JSAutoCompartment,JSAutoRequest,JSContext,JSClass};
 use js::jsapi::{JS_SetGCParameter,JSGCParamKey,JSGCMode,JSPropertySpec,JSFunctionSpec,JSFreeOp};
 use js::jsapi::{HandleValue,HandleValueArray,JSObject,HandleObject,MutableHandleObject,RootedObject};
 use js::jsval::{UndefinedValue,DoubleValue,StringValue,PrivateValue};
-use js::rust::Runtime;
 use js::rust::define_methods;
 use js::rust::define_properties;
 use js::rust::GCMethods;

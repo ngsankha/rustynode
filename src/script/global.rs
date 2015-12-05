@@ -13,12 +13,13 @@ use js::jsapi::{JSAutoCompartment,JSAutoRequest,JSContext,JSClass};
 use js::jsapi::{JS_SetGCParameter,JSGCParamKey,JSGCMode};
 use js::jsapi::{HandleValue,HandleValueArray,JSFunctionSpec,JSPropertySpec,JSNativeWrapper,JSTraceOp,JSObject,JSVersion,RootedObject,MutableHandleObject};
 use js::jsval::{UndefinedValue,DoubleValue,StringValue,PrivateValue};
-use js::rust::Runtime;
 use js::conversions::FromJSValConvertible;
 
 use script::reflect::{Reflectable, PrototypeID, finalize, initialize_global};
 
-pub struct Global;
+pub struct Global {
+  flag: u64
+}
 
 static CLASS: JSClass = JSClass {
   name: b"Global\0" as *const u8 as *const c_char,
@@ -116,7 +117,7 @@ unsafe fn print_impl(cx: *mut JSContext, args: &CallArgs) -> Result<(), ()> {
       .map(|i| String::from_jsval(cx, args.get(0), ()).unwrap())
       .collect::<Vec<String>>()
       .join(" ");
-  (*global).print(output);
+  (*global).print(output.clone());
   Ok(())
 }
 
@@ -143,7 +144,7 @@ pub fn create_global(cx: *mut JSContext, class: &'static JSClass, global: Box<Gl
 }
 
 pub unsafe fn create(cx: *mut JSContext, rval: MutableHandleObject) {
-  rval.set(create_global(cx, &CLASS, Box::new(Global), None));
+  rval.set(create_global(cx, &CLASS, Box::new(Global { flag: 0 }), None));
   let _ac = JSAutoCompartment::new(cx, rval.handle().get());
   let mut proto = RootedObject::new(cx, ptr::null_mut());
   Global::get_prototype_object(cx, rval.handle(), proto.handle_mut());
