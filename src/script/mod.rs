@@ -32,7 +32,7 @@ pub fn run_script() -> Result<(), ()> {
   let mut global_obj = unsafe { global::create(runtime.cx(), global.handle_mut()) };
   assert!(!global.ptr.is_null());
   let bootstrap_script = load_script(Path::new("lib/bootstrap.js"));
-  let user_script = load_script(Path::new("examples/timeout.js"));
+  let user_script = load_script(Path::new("examples/readfile.js"));
   try!(runtime.evaluate_script(global.handle(), bootstrap_script, "bootstrap.js".to_string(), 0));
 
   try!(runtime.evaluate_script(global.handle(), user_script, "test.js".to_string(), 0));

@@ -18,10 +18,20 @@ use mio::{EventLoop,Handler};
 
 use script::reflect::{Reflectable, PrototypeID, finalize, initialize_global};
 
+use std::fs::File;
+use std::io::prelude::*;
+use std::thread;
+
 #[derive(RustcDecodable, RustcEncodable)]
 struct Timeout {
   id: u64,
   timeout: u64
+}
+
+#[derive(RustcDecodable, RustcEncodable)]
+struct FileRead {
+  id: u64,
+  filename: String
 }
 
 pub struct EventLoopHandler {
@@ -126,6 +136,7 @@ impl Global {
   fn send(&mut self, event: String, message: String) {
     match event.as_str() {
       "timeout" => self.set_timeout(message),
+      "readFile" => self.read_file(message),
       _ => ()
     };
   }
@@ -133,6 +144,18 @@ impl Global {
   fn set_timeout(&mut self, message: String) {
     let timeout_msg: Timeout = json::decode(message.as_str()).unwrap();
     self.event_loop.timeout_ms(timeout_msg.id, timeout_msg.timeout);
+  }
+
+  fn read_file(&mut self, message: String) {
+    let readfile_msg: FileRead = json::decode(message.as_str()).unwrap();
+    let sender = self.event_loop.channel();
+
+    thread::spawn(move || {
+      let mut f = File::open(readfile_msg.filename).unwrap();
+      let mut data = String::new();
+      let _ = f.read_to_string(&mut data);
+      let _ = sender.send((readfile_msg.id, "readFile".to_string(), data));
+    });
   }
 
   fn new() -> Global {
@@ -158,6 +181,23 @@ impl Handler for EventLoopHandler {
       let event_jsstr = JS_NewStringCopyZ(cx, b"timeout\0".as_ptr() as *const c_char);
       let elems = [StringValue(&*event_jsstr), DoubleValue(id as f64)];
       let args = HandleValueArray{ length_: 2, elements_: &elems as *const Value };
+      JS_CallFunctionName(cx, global_root.handle(), b"_recv\0".as_ptr() as *const c_char, &args, rval.handle_mut());
+    }
+  }
+
+  fn notify(&mut self, event_loop: &mut EventLoop<EventLoopHandler>, message: (u64, String, String)) {
+    let cx = self.runtime.cx();
+    let _ar = JSAutoRequest::new(cx);
+    let global = self.js_global;
+    assert!(!global.is_null());
+    let _ac = JSAutoCompartment::new(cx, self.js_global);
+    unsafe {
+      let global_root = Rooted::new(cx, global);
+      let mut rval = Rooted::new(cx, UndefinedValue());
+      let event_jsstr = JS_NewStringCopyZ(cx, message.1.as_ptr() as *const c_char);
+      let data_jsstr = JS_NewStringCopyZ(cx, message.2.as_ptr() as *const c_char);
+      let elems = [StringValue(&*event_jsstr), DoubleValue(message.0 as f64), StringValue(&*data_jsstr)];
+      let args = HandleValueArray{ length_: 3, elements_: &elems as *const Value };
       JS_CallFunctionName(cx, global_root.handle(), b"_recv\0".as_ptr() as *const c_char, &args, rval.handle_mut());
     }
   }
