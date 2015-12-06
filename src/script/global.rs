@@ -5,12 +5,12 @@ use libc::c_char;
 use js::{JSCLASS_RESERVED_SLOTS_MASK,JSCLASS_RESERVED_SLOTS_SHIFT,JSCLASS_GLOBAL_SLOT_COUNT,JSCLASS_IS_GLOBAL,JSPROP_ENUMERATE};
 use js::jsapi::JS_GlobalObjectTraceHook;
 use js::jsapi::{CallArgs,CompartmentOptions,OnNewGlobalHookOption,Rooted,Value};
-use js::jsapi::{JS_DefineFunction,JS_Init,JS_InitStandardClasses,JS_NewGlobalObject,JS_EncodeStringToUTF8,JS_ReportError,JS_ReportPendingException,JS_CallFunctionName,CurrentGlobalOrNull,JS_SetReservedSlot,JS_GetReservedSlot,JS_NewStringCopyN,JS_GetClass,JS_FireOnNewGlobalObject,JS_SetPrototype};
+use js::jsapi::{JS_DefineFunction,JS_Init,JS_InitStandardClasses,JS_NewGlobalObject,JS_EncodeStringToUTF8,JS_ReportError,JS_ReportPendingException,JS_CallFunctionName,CurrentGlobalOrNull,JS_SetReservedSlot,JS_GetReservedSlot,JS_NewStringCopyZ,JS_GetClass,JS_FireOnNewGlobalObject,JS_SetPrototype};
 use js::jsapi::{JSAutoCompartment,JSAutoRequest,JSContext,JSClass};
-use js::jsapi::{JS_SetGCParameter,JSGCParamKey,JSGCMode};
 use js::jsapi::{HandleValue,HandleValueArray,JSFunctionSpec,JSPropertySpec,JSNativeWrapper,JSTraceOp,JSObject,JSVersion,RootedObject,MutableHandleObject};
 use js::jsval::{UndefinedValue,DoubleValue,StringValue,PrivateValue,ObjectValue};
 use js::conversions::FromJSValConvertible;
+use js::rust::Runtime;
 
 use rustc_serialize::json;
 
@@ -24,7 +24,10 @@ struct Timeout {
   timeout: u64
 }
 
-pub struct EventLoopHandler;
+pub struct EventLoopHandler {
+  pub runtime: Runtime,
+  pub js_global: *mut JSObject
+}
 
 pub struct Global {
   flag: u64,
@@ -120,15 +123,16 @@ impl Global {
     println!("{}", output);
   }
 
-  fn send(&self, event: String, message: String) {
+  fn send(&mut self, event: String, message: String) {
     match event.as_str() {
       "timeout" => self.set_timeout(message),
       _ => ()
     };
   }
 
-  fn set_timeout(&self, message: String) {
+  fn set_timeout(&mut self, message: String) {
     let timeout_msg: Timeout = json::decode(message.as_str()).unwrap();
+    self.event_loop.timeout_ms(timeout_msg.id, timeout_msg.timeout);
   }
 
   fn new() -> Global {
@@ -143,8 +147,19 @@ impl Handler for EventLoopHandler {
   type Message = (u64, String, String);
 
   fn timeout(&mut self, event_loop: &mut EventLoop<EventLoopHandler>, id: u64) {
-    println!("{}", id);
-    event_loop.shutdown();
+    let cx = self.runtime.cx();
+    let _ar = JSAutoRequest::new(cx);
+    let global = self.js_global;
+    assert!(!global.is_null());
+    let _ac = JSAutoCompartment::new(cx, self.js_global);
+    unsafe {
+      let global_root = Rooted::new(cx, global);
+      let mut rval = Rooted::new(cx, UndefinedValue());
+      let event_jsstr = JS_NewStringCopyZ(cx, b"timeout\0".as_ptr() as *const c_char);
+      let elems = [StringValue(&*event_jsstr), DoubleValue(id as f64)];
+      let args = HandleValueArray{ length_: 2, elements_: &elems as *const Value };
+      JS_CallFunctionName(cx, global_root.handle(), b"_recv\0".as_ptr() as *const c_char, &args, rval.handle_mut());
+    }
   }
 }
 
@@ -174,6 +189,7 @@ unsafe fn send_impl(cx: *mut JSContext, args: &CallArgs) -> Result<(), ()> {
   }
 
   let global_obj = CurrentGlobalOrNull(cx);
+  assert!(!global_obj.is_null());
   let global_root = Rooted::new(cx, ObjectValue(&*global_obj));
   let global = try!(Global::from_value(cx, global_root.handle()));
   let event = try!(String::from_jsval(cx, args.get(0), ()));
@@ -195,6 +211,7 @@ pub fn create_global(cx: *mut JSContext, class: &'static JSClass, global: *mut G
     options.version_ = JSVersion::JSVERSION_ECMA_5;
     options.traceGlobal_ = trace;
 
+    let _ar = JSAutoRequest::new(cx);
     let obj = RootedObject::new(cx, JS_NewGlobalObject(cx, class, ptr::null_mut(), OnNewGlobalHookOption::DontFireOnNewGlobalHook, &options));
     assert!(!obj.ptr.is_null());
     let _ac = JSAutoCompartment::new(cx, obj.ptr);

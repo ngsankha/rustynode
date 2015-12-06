@@ -36,7 +36,7 @@ pub fn run_script() -> Result<(), ()> {
   try!(runtime.evaluate_script(global.handle(), bootstrap_script, "bootstrap.js".to_string(), 0));
 
   try!(runtime.evaluate_script(global.handle(), user_script, "test.js".to_string(), 0));
-  let mut handler = global::EventLoopHandler;
+  let mut handler = global::EventLoopHandler { runtime: runtime, js_global: global.ptr };
   global_obj.event_loop.run(&mut handler);
   Ok(())
 }

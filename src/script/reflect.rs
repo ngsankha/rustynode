@@ -33,7 +33,7 @@ pub trait Reflectable: Sized {
     slot.to_private() as *const _
   }
 
-  unsafe fn from_value(cx: *mut JSContext, v: HandleValue) -> Result<*const Self, ()> {
+  unsafe fn from_value(cx: *mut JSContext, v: HandleValue) -> Result<*mut Self, ()> {
     if !v.is_object() {
       throw_type_error(cx, "Value is not an object");
       return Err(());
@@ -45,7 +45,7 @@ pub trait Reflectable: Sized {
       return Err(());
     }
 
-    Ok(Self::from_reflector(object))
+    Ok(Self::from_reflector(object) as *mut Self)
   }
 
   fn methods() -> Option<&'static [JSFunctionSpec]> {
