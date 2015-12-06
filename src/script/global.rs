@@ -1,6 +1,3 @@
-extern crate js;
-extern crate libc;
-
 use std::ptr;
 
 use libc::c_char;
@@ -15,10 +12,23 @@ use js::jsapi::{HandleValue,HandleValueArray,JSFunctionSpec,JSPropertySpec,JSNat
 use js::jsval::{UndefinedValue,DoubleValue,StringValue,PrivateValue,ObjectValue};
 use js::conversions::FromJSValConvertible;
 
+use rustc_serialize::json;
+
+use mio::{EventLoop,Handler};
+
 use script::reflect::{Reflectable, PrototypeID, finalize, initialize_global};
 
+#[derive(RustcDecodable, RustcEncodable)]
+struct Timeout {
+  id: u64,
+  timeout: u64
+}
+
+pub struct EventLoopHandler;
+
 pub struct Global {
-  flag: u64
+  flag: u64,
+  pub event_loop: EventLoop<EventLoopHandler>
 }
 
 static CLASS: JSClass = JSClass {
@@ -67,13 +77,13 @@ const METHODS: &'static [JSFunctionSpec] = &[
     flags: JSPROP_ENUMERATE as u16,
     selfHostedName: 0 as *const c_char
   },
-  /*JSFunctionSpec {
+  JSFunctionSpec {
     name: b"_send\0" as *const u8 as *const c_char,
     call: JSNativeWrapper {op: Some(send), info: 0 as *const _},
     nargs: 1,
     flags: JSPROP_ENUMERATE as u16,
     selfHostedName: 0 as *const c_char
-  },*/
+  },
   JSFunctionSpec {
     name: 0 as *const c_char,
     call: JSNativeWrapper { op: None, info: 0 as *const _ },
@@ -109,6 +119,33 @@ impl Global {
   fn print(&self, output: String) {
     println!("{}", output);
   }
+
+  fn send(&self, event: String, message: String) {
+    match event.as_str() {
+      "timeout" => self.set_timeout(message),
+      _ => ()
+    };
+  }
+
+  fn set_timeout(&self, message: String) {
+    let timeout_msg: Timeout = json::decode(message.as_str()).unwrap();
+  }
+
+  fn new() -> Global {
+    let mut event_loop = EventLoop::new().unwrap();
+
+    Global { flag: 0, event_loop: event_loop }
+  }
+}
+
+impl Handler for EventLoopHandler {
+  type Timeout = u64;
+  type Message = (u64, String, String);
+
+  fn timeout(&mut self, event_loop: &mut EventLoop<EventLoopHandler>, id: u64) {
+    println!("{}", id);
+    event_loop.shutdown();
+  }
 }
 
 unsafe fn print_impl(cx: *mut JSContext, args: &CallArgs) -> Result<(), ()> {
@@ -119,7 +156,9 @@ unsafe fn print_impl(cx: *mut JSContext, args: &CallArgs) -> Result<(), ()> {
       .map(|i| String::from_jsval(cx, args.get(0), ()).unwrap())
       .collect::<Vec<String>>()
       .join(" ");
-  (*global).print(output.clone());
+  (*global).print(output);
+
+  args.rval().set(UndefinedValue());
   Ok(())
 }
 
@@ -128,7 +167,29 @@ unsafe extern "C" fn print(cx: *mut JSContext, argc: u32, vp: *mut Value) -> boo
   print_impl(cx, &args).is_ok()
 }
 
-pub fn create_global(cx: *mut JSContext, class: &'static JSClass, global: Box<Global>, trace: JSTraceOp) -> *mut JSObject {
+unsafe fn send_impl(cx: *mut JSContext, args: &CallArgs) -> Result<(), ()> {
+  if args._base.argc_ != 2 {
+    JS_ReportError(cx, b"_send() requires exactly 2 arguments\0".as_ptr() as *const c_char);
+    return Err(());
+  }
+
+  let global_obj = CurrentGlobalOrNull(cx);
+  let global_root = Rooted::new(cx, ObjectValue(&*global_obj));
+  let global = try!(Global::from_value(cx, global_root.handle()));
+  let event = try!(String::from_jsval(cx, args.get(0), ()));
+  let message = try!(String::from_jsval(cx, args.get(1), ()));
+  (*global).send(event, message);
+
+  args.rval().set(UndefinedValue());
+  Ok(())
+}
+
+unsafe extern "C" fn send(cx: *mut JSContext, argc: u32, vp: *mut Value) -> bool {
+  let args = CallArgs::from_vp(vp, argc);
+  send_impl(cx, &args).is_ok()
+}
+
+pub fn create_global(cx: *mut JSContext, class: &'static JSClass, global: *mut Global, trace: JSTraceOp) -> *mut JSObject {
   unsafe {
     let mut options = CompartmentOptions::default();
     options.version_ = JSVersion::JSVERSION_ECMA_5;
@@ -137,7 +198,8 @@ pub fn create_global(cx: *mut JSContext, class: &'static JSClass, global: Box<Gl
     let obj = RootedObject::new(cx, JS_NewGlobalObject(cx, class, ptr::null_mut(), OnNewGlobalHookOption::DontFireOnNewGlobalHook, &options));
     assert!(!obj.ptr.is_null());
     let _ac = JSAutoCompartment::new(cx, obj.ptr);
-    global.init(obj.ptr);
+    let global_boxed = unsafe { Box::from_raw(global) };
+    global_boxed.init(obj.ptr);
     JS_InitStandardClasses(cx, obj.handle());
     initialize_global(obj.ptr);
     JS_FireOnNewGlobalObject(cx, obj.handle());
@@ -145,10 +207,12 @@ pub fn create_global(cx: *mut JSContext, class: &'static JSClass, global: Box<Gl
   }
 }
 
-pub unsafe fn create(cx: *mut JSContext, rval: MutableHandleObject) {
-  rval.set(create_global(cx, &CLASS, Box::new(Global { flag: 0 }), None));
+pub unsafe fn create(cx: *mut JSContext, rval: MutableHandleObject) -> Box<Global> {
+  let global = Box::into_raw(Box::new(Global::new()));
+  rval.set(create_global(cx, &CLASS, global, None));
   let _ac = JSAutoCompartment::new(cx, rval.handle().get());
   let mut proto = RootedObject::new(cx, ptr::null_mut());
   Global::get_prototype_object(cx, rval.handle(), proto.handle_mut());
   assert!(JS_SetPrototype(cx, rval.handle(), proto.handle()));
+  unsafe { Box::from_raw(global) }
 }
